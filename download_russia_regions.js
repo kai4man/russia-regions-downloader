@@ -291,7 +291,6 @@ const config = {
 };
 
 // Создаем директории если их нет
-const fs = require('fs');
 if (!fs.existsSync(config.dataDir)) {
     fs.mkdirSync(config.dataDir, { recursive: true });
 }

@@ -1,0 +1,23 @@
+{
+  "name": "russia-regions-downloader",
+  "version": "1.0.0",
+  "description": "Скрипт для скачивания всех округов России и их муниципальных образований с координатами и границами",
+  "main": "download_russia_regions.js",
+  "scripts": {
+    "start": "node download_russia_regions.js",
+    "test": "node test_script.js"
+  },
+  "keywords": [
+    "russia",
+    "regions",
+    "municipalities",
+    "geodata",
+    "osm",
+    "overpass"
+  ],
+  "author": "Assistant",
+  "license": "MIT",
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}

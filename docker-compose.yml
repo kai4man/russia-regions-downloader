@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  russia-regions-downloader:
+    build: .
+    container_name: russia-regions-downloader
+    volumes:
+      # Монтируем директорию для сохранения результатов
+      - ./data:/app/data
+      # Монтируем директорию для логов
+      - ./logs:/app/logs
+    environment:
+      # Настройки окружения
+      - NODE_ENV=production
+      # Таймаут для запросов (в миллисекундах)
+      - REQUEST_TIMEOUT=300000
+      # Количество повторных попыток
+      - MAX_RETRIES=3
+      # Пауза между запросами (в миллисекундах)
+      - REQUEST_DELAY=2000
+    restart: unless-stopped
+    # Ограничиваем ресурсы
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'

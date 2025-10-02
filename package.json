@@ -4,8 +4,7 @@
   "description": "Скрипт для скачивания всех округов России и их муниципальных образований с координатами и границами",
   "main": "download_russia_regions.js",
   "scripts": {
-    "start": "node download_russia_regions.js",
-    "test": "node test_script.js"
+    "start": "node download_russia_regions.js"
   },
   "keywords": [
     "russia",

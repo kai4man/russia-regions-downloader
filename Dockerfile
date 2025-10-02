@@ -21,5 +21,5 @@ USER nodejs
 # Открываем порт (если понадобится веб-интерфейс)
 EXPOSE 3000
 
-# Команда по умолчанию
-CMD ["node", "download_russia_regions.js"]
+# Команда по умолчанию с увеличенным лимитом памяти
+CMD ["node", "--max-old-space-size=4096", "download_russia_regions.js"]

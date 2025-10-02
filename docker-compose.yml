@@ -18,13 +18,14 @@ services:
       - MAX_RETRIES=3
       # Пауза между запросами (в миллисекундах)
       - REQUEST_DELAY=2000
-    restart: unless-stopped
+    # Не перезапускать автоматически после завершения
+    restart: no
     # Ограничиваем ресурсы
     deploy:
       resources:
         limits:
-          memory: 2G
-          cpus: '1.0'
+          memory: 4G
+          cpus: '2.0'
         reservations:
-          memory: 512M
-          cpus: '0.5'
+          memory: 1G
+          cpus: '1.0'

@@ -768,7 +768,7 @@ function saveRegionData(regionData) {
 		/[<>:"/\\|?*\x00-\x1F]/g,
 		'_'
 	)}.json`
-	fs.writeFileSync(filename, JSON.stringify(regionData, null, 2), 'utf8')
+	fs.writeFileSync(filename, JSON.stringify(regionData), 'utf8')
 	logger.success(`💾 Данные региона сохранены в: ${filename}`)
 }
 
@@ -977,11 +977,7 @@ async function main() {
 	const summaryFilename = `${config.dataDir}/russia_regions_summary_${
 		new Date().toISOString().split('T')[0]
 	}.json`
-	fs.writeFileSync(
-		summaryFilename,
-		JSON.stringify(summaryData, null, 2),
-		'utf8'
-	)
+	fs.writeFileSync(summaryFilename, JSON.stringify(summaryData), 'utf8')
 	logger.success(`💾 Сводные данные сохранены в: ${summaryFilename}`)
 }
 

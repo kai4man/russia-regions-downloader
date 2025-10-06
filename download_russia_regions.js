@@ -8,16 +8,12 @@ async function getAllRussiaRegions() {
 	try {
 		logger.log('Получаем список всех регионов России через Overpass API...')
 
-		// Улучшенный запрос, который включает спорные регионы России
+		// Запрос административных субъектов РФ (admin_level=4)
 		const overpassQuery = `[out:json][timeout:60];
 // Основные регионы России
 area["ISO3166-1"="RU"]->.russia;
 (
   relation(area.russia)["admin_level"="4"]["boundary"="administrative"];
-  // Спорные регионы, которые претендует Россия
-  relation["admin_level"="4"]["boundary"="administrative"]["disputed_by"~"RU|RU|RU"];
-  // Дополнительно: регионы с claimed_by=RU
-  relation["admin_level"="4"]["boundary"="administrative"]["claimed_by"="RU"];
 );
 out body;
 >;
@@ -41,51 +37,13 @@ out skel qt;`
 
 		const regions = []
 		data.elements.forEach(element => {
-			if (element.tags && element.tags.name) {
-				// Приоритет языков: русский, английский, основное имя
-				let regionName =
-					element.tags['name:ru'] ||
-					element.tags['name:en'] ||
-					element.tags.name
-
-				// Для спорных регионов пытаемся получить русское название
-				if (!element.tags['name:ru'] && element.tags['name']) {
-					// Если нет русского названия, но есть общее, используем его
-					regionName = element.tags['name']
-				}
-
-				// Нормализуем названия для русского языка
-				let normalizedRegionName = regionName
-
-				// Общая нормализация для известных случаев
-				if (regionName && typeof regionName === 'string') {
-					// Преобразуем украинские названия в русские аналоги на основе суффиксов
-					if (regionName.includes('Республіка')) {
-						normalizedRegionName = regionName.replace(
-							'Республіка',
-							'Республика'
-						)
-					} else if (
-						regionName.includes('Автономна') &&
-						regionName.includes('Республіка')
-					) {
-						normalizedRegionName = regionName.replace(
-							'Автономна Республіка',
-							'Автономная Республика'
-						)
-					} else if (regionName === 'Крим') {
-						normalizedRegionName = 'Автономная Республика Крым'
-					} else if (
-						regionName.includes('м.') &&
-						regionName.includes('Севастополь')
-					) {
-						normalizedRegionName = 'Севастополь'
-					}
-				}
-
-				// Добавляем регион в список
-				if (normalizedRegionName && !regions.includes(normalizedRegionName)) {
-					regions.push(normalizedRegionName)
+			if (element.tags && (element.tags['name:ru'] || element.tags.name)) {
+				const regionName = element.tags['name:ru'] || element.tags.name
+				if (
+					regionName &&
+					!regions.some(r => r.name === regionName)
+				) {
+					regions.push({ name: regionName, osm_id: element.id })
 				}
 			}
 		})
@@ -98,7 +56,7 @@ out skel qt;`
 		logger.success(`Получено ${regions.length} регионов через Overpass API`)
 		logger.log(`Полный список регионов:`)
 		regions.forEach((region, index) => {
-			logger.log(`  ${index + 1}. ${region}`)
+			logger.log(`  ${index + 1}. ${region.name}`)
 		})
 		return regions
 	} catch (error) {
@@ -148,7 +106,7 @@ async function getRegionsViaNominatim() {
 					const regionName = parts[0].trim()
 					if (
 						regionName &&
-						!regions.includes(regionName) &&
+						!regions.some(r => r.name === regionName) &&
 						(regionName.includes('область') ||
 							regionName.includes('край') ||
 							regionName.includes('республика') ||
@@ -156,7 +114,7 @@ async function getRegionsViaNominatim() {
 							regionName === 'Москва' ||
 							regionName === 'Санкт-Петербург')
 					) {
-						regions.push(regionName)
+						regions.push({ name: regionName, osm_id: null })
 					}
 				}
 			}
@@ -414,8 +372,8 @@ function makeRequest(url, options = {}) {
 	})
 }
 
-// Функция для получения данных о регионе через Nominatim
-async function getRegionData(regionName) {
+// Получение данных о регионе через Nominatim по имени (fallback)
+async function getRegionDataByName(regionName) {
 	try {
 		logger.log(`Поиск данных для региона: ${regionName}`)
 
@@ -481,6 +439,39 @@ async function getRegionData(regionName) {
 		})
 		return null
 	}
+}
+
+// Получение данных о регионе через Nominatim по osm_id (relation)
+async function getRegionDataByOsmId(osmId) {
+    try {
+        const params = new URLSearchParams({
+            format: 'json',
+            osmtype: 'R',
+            osmid: String(osmId),
+            addressdetails: '1'
+        })
+        const url = `https://nominatim.openstreetmap.org/lookup?${params}`
+        const data = await makeRequest(url, {
+            headers: {
+                'Accept-Language': 'ru',
+                Accept: 'application/json',
+                'User-Agent':
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            },
+        })
+        if (!Array.isArray(data) || data.length === 0) {
+            logger.warn(`Nominatim lookup не вернул данные для OSM ID ${osmId}`)
+            return null
+        }
+        const item = data[0]
+        logger.success(`Найден регион по OSM ID ${osmId}: ${item.display_name}`)
+        return item
+    } catch (error) {
+        logger.error(`Ошибка Nominatim lookup по OSM ID ${osmId}`, {
+            error: error.message,
+        })
+        return null
+    }
 }
 
 // Функция для получения границ через Overpass API с повторными попытками
@@ -629,6 +620,7 @@ function processOverpassData(overpassData) {
 					(element.tags.admin_level === '6' || element.tags.admin_level === '8')
 				) {
 					relations.set(element.id, {
+						id: element.id,
 						name:
 							element.tags.name || element.tags['name:ru'] || 'Без названия',
 						adminLevel: element.tags.admin_level,
@@ -773,23 +765,34 @@ function saveRegionData(regionData) {
 }
 
 // Основная функция для обработки региона
-async function processRegion(regionName) {
+async function processRegion(region) {
 	try {
+		const regionName = typeof region === 'string' ? region : region.name
+		const regionOsmId = typeof region === 'string' ? null : region.osm_id
 		logger.log(`\n=== Обработка региона: ${regionName} ===`)
 
 		// Получаем данные о регионе
-		const regionData = await getRegionData(regionName)
+		let regionData = null
+		if (regionOsmId) {
+			regionData = await getRegionDataByOsmId(regionOsmId)
+			// Бывает, что lookup не отдает lat/lon; в таком случае попробуем name
+			if (!regionData || (!regionData.lat || !regionData.lon)) {
+				regionData = await getRegionDataByName(regionName)
+			}
+		} else {
+			regionData = await getRegionDataByName(regionName)
+		}
 		if (!regionData) {
 			logger.warn(`Не удалось найти данные для региона: ${regionName}`)
 			return null
 		}
 
 		// Получаем границы
-		const overpassData = await getRegionBoundaries(regionData.osm_id)
+		const overpassData = await getRegionBoundaries(regionOsmId || regionData.osm_id)
 		if (!overpassData || !overpassData.elements) {
 			logger.warn(`Не удалось получить границы для ${regionName}`, {
 				regionName: regionName,
-				osmId: regionData.osm_id,
+				osmId: regionOsmId || regionData.osm_id,
 			})
 			return null
 		}
@@ -801,7 +804,7 @@ async function processRegion(regionName) {
 
 		const regionResult = {
 			name: regionName,
-			osm_id: regionData.osm_id,
+			osm_id: regionOsmId || regionData.osm_id,
 			center: [parseFloat(regionData.lat), parseFloat(regionData.lon)],
 			display_name: regionData.display_name,
 			municipalities: [],
@@ -851,6 +854,7 @@ async function processRegion(regionName) {
 					const center = calculatePolygonCenter(outerRing)
 
 					const municipality = {
+						id: relation.id,
 						name: relation.name,
 						admin_level: relation.adminLevel,
 						center: [center[1], center[0]], // Меняем местами lon/lat для GeoJSON
@@ -907,14 +911,15 @@ async function main() {
 	const startTime = Date.now()
 
 	for (let i = 0; i < totalRegions; i++) {
-		const regionName = russiaRegions[i]
+		const regionItem = russiaRegions[i]
+		const regionName = typeof regionItem === 'string' ? regionItem : regionItem.name
 		logger.log(
 			`\nПрогресс: ${i + 1}/${totalRegions} (${Math.round(
 				(i / totalRegions) * 100
 			)}%)`
 		)
 
-		const result = await processRegion(regionName)
+		const result = await processRegion(regionItem)
 		if (result) {
 			// Сохраняем только метаданные вместо полных данных
 			processedRegions.push({

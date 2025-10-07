@@ -276,8 +276,8 @@ class Logger {
 // Настройки из переменных окружения
 const config = {
 	requestTimeout: parseInt(process.env.REQUEST_TIMEOUT) || 300000,
-	maxRetries: parseInt(process.env.MAX_RETRIES) || 3,
-	requestDelay: parseInt(process.env.REQUEST_DELAY) || 2000,
+	maxRetries: parseInt(process.env.MAX_RETRIES) || 7,
+	requestDelay: parseInt(process.env.REQUEST_DELAY) || 15000,
 	dataDir: process.env.DATA_DIR || './data',
 	logsDir: process.env.LOGS_DIR || './logs',
 }
@@ -415,7 +415,10 @@ async function getRegionDataByName(regionName) {
 					(firstPart.includes('республика') &&
 						regionName.includes('республика')) ||
 					(firstPart.includes('автономный округ') &&
-						regionName.includes('автономный округ'))
+						regionName.includes('автономный округ')) ||
+					// Специальные случаи для Крыма и Севастополя
+					(regionName.includes('Крым') && firstPart.includes('Крым')) ||
+					(regionName.includes('Севастополь') && firstPart.includes('Севастополь'))
 				) {
 					bestMatch = item
 					break
@@ -441,37 +444,76 @@ async function getRegionDataByName(regionName) {
 	}
 }
 
-// Получение данных о регионе через Nominatim по osm_id (relation)
-async function getRegionDataByOsmId(osmId) {
-    try {
-        const params = new URLSearchParams({
-            format: 'json',
-            osmtype: 'R',
-            osmid: String(osmId),
-            addressdetails: '1'
-        })
-        const url = `https://nominatim.openstreetmap.org/lookup?${params}`
-        const data = await makeRequest(url, {
-            headers: {
-                'Accept-Language': 'ru',
-                Accept: 'application/json',
-                'User-Agent':
-                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            },
-        })
-        if (!Array.isArray(data) || data.length === 0) {
-            logger.warn(`Nominatim lookup не вернул данные для OSM ID ${osmId}`)
-            return null
+// Получение данных о регионе через Overpass по osm_id (relation)
+async function getRegionDataByOsmId(osmId, retries = config.maxRetries) {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+            logger.log(`Overpass lookup для OSM ID ${osmId} (попытка ${attempt}/${retries})`)
+            
+            const overpassQuery = `[out:json][timeout:30];
+relation(id:${osmId});
+out center meta;`
+            
+            const data = await makeRequest('https://overpass-api.de/api/interpreter', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    Accept: 'application/json',
+                },
+                body: `data=${encodeURIComponent(overpassQuery)}`,
+            })
+            
+            if (!data || !data.elements || data.elements.length === 0) {
+                logger.warn(`Overpass не вернул данные для OSM ID ${osmId} (попытка ${attempt})`)
+                if (attempt < retries) {
+                    const delay = 10000 * Math.pow(2, attempt - 1)
+                    logger.log(`Повторная попытка через ${delay/1000} секунд...`)
+                    await new Promise(resolve => setTimeout(resolve, delay))
+                    continue
+                }
+                return null
+            }
+            
+            const element = data.elements[0]
+            if (!element.tags || !element.tags.name) {
+                logger.warn(`У relation ${osmId} нет тега name (попытка ${attempt})`)
+                if (attempt < retries) {
+                    const delay = 10000 * Math.pow(2, attempt - 1)
+                    logger.log(`Повторная попытка через ${delay/1000} секунд...`)
+                    await new Promise(resolve => setTimeout(resolve, delay))
+                    continue
+                }
+                return null
+            }
+            
+            // Создаем объект в формате Nominatim для совместимости
+            const regionData = {
+                osm_id: osmId,
+                lat: element.center ? element.center.lat : null,
+                lon: element.center ? element.center.lon : null,
+                display_name: `${element.tags.name}, Россия`,
+                name: element.tags.name
+            }
+            
+            logger.success(`Найден регион по OSM ID ${osmId}: ${regionData.display_name}`)
+            return regionData
+        } catch (error) {
+            logger.error(`Ошибка Overpass lookup по OSM ID ${osmId} (попытка ${attempt})`, {
+                error: error.message,
+            })
+            
+            if (attempt < retries) {
+                // Экспоненциальная задержка: 15, 30, 60, 120, 240, 480 секунд
+                const delay = 15000 * Math.pow(2, attempt - 1)
+                logger.log(`Повторная попытка через ${delay/1000} секунд...`)
+                await new Promise(resolve => setTimeout(resolve, delay))
+                continue
+            }
         }
-        const item = data[0]
-        logger.success(`Найден регион по OSM ID ${osmId}: ${item.display_name}`)
-        return item
-    } catch (error) {
-        logger.error(`Ошибка Nominatim lookup по OSM ID ${osmId}`, {
-            error: error.message,
-        })
-        return null
     }
+    
+    logger.error(`Не удалось получить данные для OSM ID ${osmId} после ${retries} попыток`)
+    return null
 }
 
 // Функция для получения границ через Overpass API с повторными попытками
@@ -586,8 +628,10 @@ out skel qt;`
 			)
 
 			if (attempt < retries) {
-				logger.log(`Повторная попытка через 5 секунд...`)
-				await new Promise(resolve => setTimeout(resolve, 5000))
+				// Экспоненциальная задержка: 15, 30, 60, 120, 240, 480 секунд
+				const delay = 15000 * Math.pow(2, attempt - 1)
+				logger.log(`Повторная попытка через ${delay/1000} секунд...`)
+				await new Promise(resolve => setTimeout(resolve, delay))
 				continue
 			}
 		}
@@ -775,10 +819,6 @@ async function processRegion(region) {
 		let regionData = null
 		if (regionOsmId) {
 			regionData = await getRegionDataByOsmId(regionOsmId)
-			// Бывает, что lookup не отдает lat/lon; в таком случае попробуем name
-			if (!regionData || (!regionData.lat || !regionData.lon)) {
-				regionData = await getRegionDataByName(regionName)
-			}
 		} else {
 			regionData = await getRegionDataByName(regionName)
 		}
